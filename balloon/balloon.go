@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/cunnie/gobonniego/mem"
+	"github.com/typomedia/diskspeed/mem"
 	"log"
 	"math/rand"
 )

@@ -3,10 +3,11 @@ package bench
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/cunnie/gobonniego/mem"
+	"github.com/typomedia/diskspeed/app"
+	"github.com/typomedia/diskspeed/mem"
 	"io"
 	"math/rand"
 	"os"
@@ -14,13 +15,12 @@ import (
 	"time"
 )
 
-const Version = "1.0.9"
 const Blocksize = 0x1 << 16 // 65,536 bytes, 2^16 bytes
 
 // bench.Mark{} -- haha! Get it? "benchmark"!
 type Mark struct {
 	Start                       time.Time `json:"start_time"`
-	BonnieDir                   string    `json:"gobonniego_directory"`
+	TempDir                     string    `json:"temp_dir"`
 	AggregateTestFilesSizeInGiB float64   `json:"disk_space_used_gib"`
 	NumReadersWriters           int       `json:"num_readers_and_writers"`
 	PhysicalMemory              uint64    `json:"physical_memory_bytes"`
@@ -28,6 +28,7 @@ type Mark struct {
 	Results                     []Result  `json:"results"`
 	fileSize                    int
 	randomBlock                 []byte
+	randomString                string
 }
 
 type Result struct {
@@ -46,7 +47,7 @@ type ThreadResult struct {
 }
 
 func (bm *Mark) Version() string {
-	return Version
+	return app.App.Version
 }
 
 // the Sequential Write test must be called before the other two tests, for it creates the files
@@ -55,7 +56,9 @@ func (bm *Mark) RunSequentialWriteTest() error {
 
 	// Delete pre-existing files, should only be necessary when there are two or more test runs
 	for i := 0; i < bm.NumReadersWriters; i++ {
-		err := os.RemoveAll(path.Join(bm.BonnieDir, fmt.Sprintf("bonnie.%d", i)))
+		err := os.RemoveAll(
+			path.Join(bm.TempDir, fmt.Sprintf("%s%d", bm.randomString, i)),
+		)
 		if err != nil {
 			return err
 		}
@@ -68,7 +71,10 @@ func (bm *Mark) RunSequentialWriteTest() error {
 	start := time.Now()
 
 	for i := 0; i < bm.NumReadersWriters; i++ {
-		go bm.singleThreadWriteTest(path.Join(bm.BonnieDir, fmt.Sprintf("bonnie.%d", i)), bytesWritten)
+		go bm.singleThreadWriteTest(
+			path.Join(bm.TempDir, fmt.Sprintf("%s%d", bm.randomString, i)),
+			bytesWritten,
+		)
 	}
 	newResult.WrittenBytes = 0
 	for i := 0; i < bm.NumReadersWriters; i++ {
@@ -79,7 +85,7 @@ func (bm *Mark) RunSequentialWriteTest() error {
 		newResult.WrittenBytes += result.Result
 	}
 
-	newResult.WrittenDuration = time.Now().Sub(start)
+	newResult.WrittenDuration = time.Since(start)
 	return nil
 }
 
@@ -93,7 +99,7 @@ func (bm *Mark) RunSequentialReadTest() error {
 	start := time.Now()
 
 	for i := 0; i < bm.NumReadersWriters; i++ {
-		go bm.singleThreadReadTest(path.Join(bm.BonnieDir, fmt.Sprintf("bonnie.%d", i)), bytesRead)
+		go bm.singleThreadReadTest(path.Join(bm.TempDir, fmt.Sprintf("%s%d", bm.randomString, i)), bytesRead)
 	}
 	newResult.ReadBytes = 0
 	for i := 0; i < bm.NumReadersWriters; i++ {
@@ -104,7 +110,7 @@ func (bm *Mark) RunSequentialReadTest() error {
 		newResult.ReadBytes += result.Result
 	}
 
-	newResult.ReadDuration = time.Now().Sub(start)
+	newResult.ReadDuration = time.Since(start)
 	return nil
 }
 
@@ -116,7 +122,7 @@ func (bm *Mark) RunIOPSTest() error {
 	start := time.Now()
 
 	for i := 0; i < bm.NumReadersWriters; i++ {
-		go bm.singleThreadIOPSTest(path.Join(bm.BonnieDir, fmt.Sprintf("bonnie.%d", i)), opsPerformed)
+		go bm.singleThreadIOPSTest(path.Join(bm.TempDir, fmt.Sprintf("%s%d", bm.randomString, i)), opsPerformed)
 	}
 	newResult.IOOperations = 0
 	for i := 0; i < bm.NumReadersWriters; i++ {
@@ -127,7 +133,7 @@ func (bm *Mark) RunIOPSTest() error {
 		newResult.IOOperations += result.Result
 	}
 
-	newResult.IODuration = time.Now().Sub(start)
+	newResult.IODuration = time.Since(start)
 	return nil
 }
 
@@ -138,7 +144,7 @@ func (bm Mark) MarshalJSON() ([]byte, error) {
 		Version string `json:"version"`
 		Alias
 	}{
-		Version: Version,
+		Version: app.App.Version,
 		Alias:   Alias(bm),
 	})
 }
@@ -169,7 +175,7 @@ func ClearBufferCacheEveryThreeSeconds() error {
 	for ; ; <-time.After(3 * time.Second) {
 		err := mem.ClearBufferCache()
 		if err != nil {
-			return fmt.Errorf("Couldn't clear the buffer cache, bailing: %s", err)
+			return fmt.Errorf("couldn't clear the buffer cache, bailing: %s", err)
 		}
 	}
 }
@@ -182,15 +188,14 @@ func IOPS(operations int, duration time.Duration) float64 {
 	return float64(operations) / float64(duration.Seconds())
 }
 
-// calling program should `defer os.RemoveAll(bm.BonnieDir)` to clean up after run
-func (bm *Mark) SetBonnieDir(parentDir string) error {
-	// if bonnieParentDir exists, e.g. "/tmp", all is good, but if it doesn't, e.g. "/tmp/gobonniego_run_five", then create it
+// calling program should `defer os.RemoveAll(bm.TempDir)` to clean up after run
+func (bm *Mark) SetTempDir(parentDir string) error {
 	err := createDirIfNeeded(parentDir)
 	if err != nil {
 		return err
 	}
-	bm.BonnieDir = path.Join(parentDir, "gobonniego")
-	return createDirIfNeeded(bm.BonnieDir)
+	bm.TempDir = path.Join(parentDir, fmt.Sprintf(".%s", app.App.Name))
+	return createDirIfNeeded(bm.TempDir)
 }
 
 func createDirIfNeeded(dir string) error {
@@ -201,7 +206,7 @@ func createDirIfNeeded(dir string) error {
 			return err
 		}
 	} else if !fileInfo.IsDir() {
-		return errors.New(fmt.Sprintf("'%s' is not a directory!", dir))
+		return fmt.Errorf("'%s' is not a directory", dir)
 	}
 	return nil
 }
@@ -209,6 +214,7 @@ func createDirIfNeeded(dir string) error {
 func (bm *Mark) CreateRandomBlock() error {
 	// randomBlock has random data to prevent filesystems which use compression (e.g. ZFS) from having an unfair advantage
 	bm.randomBlock = make([]byte, Blocksize)
+	bm.randomString = randomString(9)
 	lenRandom, err := rand.Read(bm.randomBlock)
 	if err != nil {
 		return err
@@ -292,7 +298,7 @@ func (bm *Mark) singleThreadReadTest(filename string, bytesReadChannel chan<- Th
 			if !bytes.Equal(bm.randomBlock, data) {
 				bytesReadChannel <- ThreadResult{
 					Result: 0, Error: fmt.Errorf(
-						"Most recent block didn't match random block, bytes read (includes corruption): %d",
+						"most recent block didn't match random block, bytes read (includes corruption): %d",
 						bytesRead),
 				}
 				return
@@ -328,7 +334,7 @@ func (bm *Mark) singleThreadIOPSTest(filename string, numOpsChannel chan<- Threa
 	checksum := make([]byte, diskBlockSize)
 
 	start := time.Now()
-	for i := 0; time.Now().Sub(start).Seconds() < bm.IODuration; i++ { // run for xx seconds then blow this taco stand
+	for i := 0; time.Since(start).Seconds() < bm.IODuration; i++ { // run for xx seconds then blow this taco stand
 		f.Seek(rand.Int63n(fileSizeLessOneDiskBlock), 0)
 		// TPC-E has a reads:writes ratio of 9.7:1  http://www.cs.cmu.edu/~chensm/papers/TPCE-sigmod-record10.pdf
 		// we round to 10:1
@@ -357,7 +363,7 @@ func (bm *Mark) singleThreadIOPSTest(filename string, numOpsChannel chan<- Threa
 			if length != diskBlockSize {
 				numOpsChannel <- ThreadResult{
 					Result: 0,
-					Error: fmt.Errorf("I expected to write %d bytes, instead I wrote %d bytes!",
+					Error: fmt.Errorf("i expected to write %d bytes, instead I wrote %d bytes",
 						diskBlockSize, length),
 				}
 				return
@@ -373,4 +379,12 @@ func (bm *Mark) singleThreadIOPSTest(filename string, numOpsChannel chan<- Threa
 		return
 	}
 	numOpsChannel <- ThreadResult{Result: int(numOperations), Error: nil}
+}
+
+func randomString(length int) string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)[:length]
 }

@@ -2,66 +2,69 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
-	"github.com/cunnie/gobonniego/bench"
-	"github.com/cunnie/gobonniego/mem"
-	"io/ioutil"
+	"github.com/spf13/pflag"
+	"github.com/typomedia/diskspeed/app"
+	"github.com/typomedia/diskspeed/bench"
+	"github.com/typomedia/diskspeed/mem"
 	"log"
-	"math"
 	"os"
 	"runtime"
 	"time"
 )
 
 func main() {
-	var jsonOut, verbose, version bool
-	var err error
-	var numberOfRuns, numberOfSecondsToRun int
+	var (
+		jsonout, verbose, version          bool
+		numberOfRuns, numberOfSecondsToRun int
+		err                                error
+	)
 
-	bm := bench.Mark{Start: time.Now()}
+	bm := bench.Mark{
+		Start: time.Now(),
+	}
 
-	bonnieParentDir, err := ioutil.TempDir("", "gobonniegoParent")
+	currentDir, err := os.Getwd()
 	check(err)
-	defer os.RemoveAll(bonnieParentDir)
 
 	bm.PhysicalMemory, err = mem.Get()
 	check(err)
 
-	flag.BoolVar(&verbose, "v", false,
-		"Verbose. Will print to stderr diagnostic information such as the amount of RAM, number of cores, etc.")
-	flag.BoolVar(&version, "version", false,
-		"Version. Will print the current version of gobonniego and then exit")
-	flag.BoolVar(&jsonOut, "json", false,
-		"Version. Will print JSON-formatted results to stdout. Does not affect diagnostics to stderr")
-	flag.IntVar(&numberOfRuns, "runs", 1,
-		"The number of test runs")
-	flag.IntVar(&numberOfSecondsToRun, "seconds", 0,
-		"The time (in seconds) to run the test")
-	flag.IntVar(&bm.NumReadersWriters, "threads", runtime.NumCPU(),
-		"The number of concurrent readers/writers, defaults to the number of CPU cores")
-	flag.Float64Var(&bm.AggregateTestFilesSizeInGiB, "size", math.Floor(float64(2*int(bm.PhysicalMemory>>20)))/1024,
+	pflag.BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
+	pflag.BoolVarP(&version, "version", "V", false, "Show version information")
+	pflag.BoolVarP(&jsonout, "json", "j", false, "Will print JSON-formatted results to stdout")
+	pflag.IntVarP(&numberOfRuns, "runs", "r", 1, "The number of test runs")
+	pflag.IntVarP(&numberOfSecondsToRun, "seconds", "s", 0, "The time in seconds to run the test")
+	pflag.IntVarP(&bm.NumReadersWriters, "threads", "t", runtime.NumCPU(), "The number of concurrent readers/writers. Defaults to the number of CPU cores")
+	pflag.Float64VarP(&bm.AggregateTestFilesSizeInGiB, "gb", "g", float64(2*int(bm.PhysicalMemory>>20))/1024,
 		"The amount of disk space to use (in GiB), defaults to twice the physical RAM")
-	flag.Float64Var(&bm.IODuration, "iops-duration", 15.0,
+	pflag.Float64VarP(&bm.IODuration, "iops-duration", "i", 15.0,
 		"The duration in seconds to run the IOPS benchmark, set to 0.5 for quick feedback during development")
-	flag.StringVar(&bonnieParentDir, "dir", bonnieParentDir,
-		"The directory in which gobonniego places its temporary files, should have at least '-size' space available")
-	flag.Parse()
+	pflag.StringVarP(&currentDir, "dir", "d", currentDir, "The directory to use for the test. Defaults to the current directory")
+	pflag.Parse()
 
 	if version {
-		fmt.Printf("gobonniego version %s\n", bm.Version())
+		fmt.Printf("%s %s\n", app.App.Name, app.App.Version)
+		fmt.Println(app.App.Description)
+		fmt.Println(app.App.Author)
 		os.Exit(0)
 	}
 
-	check(bm.SetBonnieDir(bonnieParentDir))
-	defer os.RemoveAll(bm.BonnieDir)
+	check(bm.SetTempDir(currentDir))
+	defer os.RemoveAll(bm.TempDir)
 
-	log.Printf("gobonniego starting. version: %s, runs: %d, seconds: %d, threads: %d, disk space to use (MiB): %d",
-		bm.Version(), numberOfRuns, numberOfSecondsToRun, bm.NumReadersWriters, int(bm.AggregateTestFilesSizeInGiB*(1<<10)))
+	if !jsonout {
+		fmt.Printf("%s %s\n", app.App.Name, app.App.Version)
+	}
 	if verbose {
+		fmt.Printf("runs: %d, seconds: %d, threads: %d, disk space to use: %d MB\n",
+			numberOfRuns,
+			numberOfSecondsToRun,
+			bm.NumReadersWriters,
+			int(bm.AggregateTestFilesSizeInGiB*(1<<10)))
 		log.Printf("Number of CPU cores: %d", runtime.NumCPU())
-		log.Printf("Total system RAM (MiB): %d", bm.PhysicalMemory>>20)
-		log.Printf("Bonnie working directory: %s", bonnieParentDir)
+		log.Printf("Total system RAM: %d MB", bm.PhysicalMemory>>20)
+		log.Printf("Working directory: %s", currentDir)
 	}
 
 	check(bm.CreateRandomBlock())
@@ -75,7 +78,7 @@ func main() {
 			log.Printf("Written (MB): %f\n", float64(bm.Results[i].WrittenBytes)/1000000)
 			log.Printf("Duration (seconds): %f\n", bm.Results[i].WrittenDuration.Seconds())
 		}
-		if !jsonOut {
+		if !jsonout {
 			fmt.Printf("Sequential Write MB/s: %0.2f\n",
 				bench.MegaBytesPerSecond(bm.Results[i].WrittenBytes, bm.Results[i].WrittenDuration))
 		}
@@ -86,7 +89,7 @@ func main() {
 			log.Printf("Read (MB): %f\n", float64(bm.Results[i].ReadBytes)/1000000)
 			log.Printf("Duration (seconds): %f\n", bm.Results[i].ReadDuration.Seconds())
 		}
-		if !jsonOut {
+		if !jsonout {
 			fmt.Printf("Sequential Read MB/s: %0.2f\n",
 				bench.MegaBytesPerSecond(bm.Results[i].ReadBytes, bm.Results[i].ReadDuration))
 		}
@@ -96,12 +99,12 @@ func main() {
 			log.Printf("operations %d\n", bm.Results[i].IOOperations)
 			log.Printf("Duration (seconds): %f\n", bm.Results[i].IODuration.Seconds())
 		}
-		if !jsonOut {
+		if !jsonout {
 			fmt.Printf("IOPS: %0.0f\n",
 				bench.IOPS(bm.Results[i].IOOperations, bm.Results[i].IODuration))
 		}
 	}
-	if jsonOut {
+	if jsonout {
 		json.NewEncoder(os.Stdout).Encode(bm)
 	}
 }
