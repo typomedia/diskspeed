@@ -28,4 +28,10 @@ loc:
 	go install github.com/boyter/scc/v3@latest
 	scc --exclude-dir vendor --exclude-dir bin .
 
+cross:
+	go mod tidy
+	GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bin/diskspeed-linux-amd64 .
+	GOOS=freebsd GOARCH=amd64 go build -ldflags "-s -w" -o bin/diskspeed-bsd-arm64 .
+	GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o bin/diskspeed-win-amd64.exe .
+
 win: icon build
