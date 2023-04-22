@@ -1,5 +1,8 @@
 # `diskspeed` - Disk speed benchmark tool
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/typomedia/diskspeed)](https://pkg.go.dev/github.com/typomedia/diskspeed)
+[![Go Report Card](https://goreportcard.com/badge/github.com/typomedia/diskspeed)](https://goreportcard.com/report/github.com/typomedia/diskspeed)
+
 This is a fork of [gobonniego](https://github.com/cunnie/gobonniego) with some minor changes. It is a simple tool to benchmark the speed of your disk. It can be used to test the performance of a new disk or to compare the performance of different disks.
 
 For more information about the benchmarking methodology, see [bonnie-64](https://code.google.com/archive/p/bonnie-64/) and [gobonniego](https://github.com/cunnie/gobonniego).
