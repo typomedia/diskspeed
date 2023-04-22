@@ -15,7 +15,7 @@ import (
 
 func main() {
 	var (
-		jsonout, verbose, version          bool
+		verbose, version, jsonout, help    bool
 		numberOfRuns, numberOfSecondsToRun int
 		err                                error
 	)
@@ -31,31 +31,36 @@ func main() {
 	check(err)
 
 	pflag.BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
+	pflag.BoolVarP(&help, "help", "h", false, "Show help")
 	pflag.BoolVarP(&version, "version", "V", false, "Show version information")
-	pflag.BoolVarP(&jsonout, "json", "j", false, "Will print JSON-formatted results to stdout")
+	pflag.BoolVarP(&jsonout, "json", "j", false, "Output results in JSON format")
 	pflag.IntVarP(&numberOfRuns, "runs", "r", 1, "The number of test runs")
 	pflag.IntVarP(&numberOfSecondsToRun, "seconds", "s", 0, "The time in seconds to run the test")
 	pflag.IntVarP(&bm.NumReadersWriters, "threads", "t", runtime.NumCPU(), "The number of concurrent readers/writers. Defaults to the number of CPU cores")
-	pflag.Float64VarP(&bm.AggregateTestFilesSizeInGiB, "gb", "g", float64(2*int(bm.PhysicalMemory>>20))/1024,
-		"The amount of disk space to use (in GiB), defaults to twice the physical RAM")
+	pflag.Float64VarP(&bm.AggregateTestFilesSizeInGiB, "gb", "g", float64(2*int(bm.PhysicalMemory>>20)/1000), "The amount of disk space to use for the test")
 	pflag.Float64VarP(&bm.IODuration, "iops-duration", "i", 15.0,
-		"The duration in seconds to run the IOPS benchmark, set to 0.5 for quick feedback during development")
-	pflag.StringVarP(&currentDir, "dir", "d", currentDir, "The directory to use for the test. Defaults to the current directory")
+		"The duration in seconds to use for the IOPS test")
+	pflag.StringVarP(&currentDir, "dir", "d", currentDir, "The directory to use for the test")
 	pflag.Parse()
 
-	if version {
+	if !jsonout {
 		fmt.Printf("%s %s\n", app.App.Name, app.App.Version)
+	}
+
+	if version {
 		fmt.Println(app.App.Description)
 		fmt.Println(app.App.Author)
+		os.Exit(0)
+	}
+
+	if help {
+		pflag.PrintDefaults()
 		os.Exit(0)
 	}
 
 	check(bm.SetTempDir(currentDir))
 	defer os.RemoveAll(bm.TempDir)
 
-	if !jsonout {
-		fmt.Printf("%s %s\n", app.App.Name, app.App.Version)
-	}
 	if verbose {
 		fmt.Printf("runs: %d, seconds: %d, threads: %d, disk space to use: %d MB\n",
 			numberOfRuns,
